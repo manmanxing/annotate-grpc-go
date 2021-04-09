@@ -140,17 +140,17 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		dopts:             defaultDialOptions(),
 		blockingpicker:    newPickerWrapper(),
 		czData:            new(channelzData),
-		firstResolveEvent: grpcsync.NewEvent(),//一次性事件
+		firstResolveEvent: grpcsync.NewEvent(), //一次性事件
 	}
 	cc.retryThrottler.Store((*retryThrottler)(nil))
 	//这里设置可以取消的 context，调用 cc.cancel() 主动中断 Dial
 	cc.ctx, cc.cancel = context.WithCancel(context.Background())
 
 	for _, opt := range opts {
-		opt.apply(&cc.dopts)//初始化所有参数
+		opt.apply(&cc.dopts) //初始化所有参数
 	}
 
-	chainUnaryClientInterceptors(cc) //处理一元拦截器
+	chainUnaryClientInterceptors(cc)  //处理一元拦截器
 	chainStreamClientInterceptors(cc) //处理流客户端拦截器
 
 	defer func() {
@@ -179,7 +179,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 	}
 
 	//这里判断与配置ClientConn的传输安全性
-	if !cc.dopts.insecure {//通过 WithInsecure 配置
+	if !cc.dopts.insecure { //通过 WithInsecure 配置
 		//表示禁用ClientConn的传输安全性时
 		//存储建立客户端连接所需的身份验证器  TransportCredentials和CredsBundle中必须有一个为 nil。
 		if cc.dopts.copts.TransportCredentials == nil && cc.dopts.copts.CredsBundle == nil {
@@ -218,7 +218,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		cc.dopts.copts.UserAgent = grpcUA
 	}
 
-	if cc.dopts.timeout > 0 {//可以通过 WithTimeout 函数设置
+	if cc.dopts.timeout > 0 { //可以通过 WithTimeout 函数设置
 		//这个超时是用作 clientConn 初始化超时判断
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, cc.dopts.timeout)
@@ -226,7 +226,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 	}
 	defer func() {
 		select {
-		case <-ctx.Done()://收到这个，表示cc.dopts.timeout >0 且已经设置了超时，且 ctx 过期了
+		case <-ctx.Done(): //收到这个，表示cc.dopts.timeout >0 且已经设置了超时，且 ctx 过期了
 			switch {
 			case ctx.Err() == err:
 				conn = nil
@@ -239,34 +239,36 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		}
 	}()
 
-	scSet := false
-	if cc.dopts.scChan != nil {//通过 WithServiceConfig 设置，是一个具有读取服务配置的通道
+	scSet := false              //是否读取到服务配置标记，true 表示成功获取到，因为 scChan 可以异步设置，因此会出现 scChan 不为 nil，但是 scSet = false的情况
+	if cc.dopts.scChan != nil { //通过 WithServiceConfig 设置，是一个具有读取服务配置的通道
 		// 尝试获取初始服务配置
 		select {
 		case sc, ok := <-cc.dopts.scChan:
 			if ok {
 				cc.sc = &sc
+				//应用服务配置
+				//注意：这里的更新配置会阻塞的让 ConfigSelector 都应用完成才允许下一次更新
 				cc.safeConfigSelector.UpdateConfigSelector(&defaultConfigSelector{&sc})
 				scSet = true
 			}
-		default:
+		default: //如果在此之前没有设置 scChan，可能会到这里
 		}
 	}
-	if cc.dopts.bs == nil {//用于设置连接尝试失败后，用于connectRetryNum的退避策略，通过 withBackoff 设置
+	if cc.dopts.bs == nil { //用于设置连接尝试失败后，用于connectRetryNum的重试策略，比如重试等待时间，通过 withBackoff 设置
 		cc.dopts.bs = backoff.DefaultExponential
 	}
 
-	// 确定要使用的解析器
+	// 这里确定要使用的解析器生成器
 	// cc.dopts.copts 涵盖了与服务器通信的所有相关选项
 	// cc.dopts.copts.Dialer 指定了如何请求网络上的某个地址
 	//这里开始解析 target ，转化成 parsedTarget
 	cc.parsedTarget = grpcutil.ParseTarget(cc.target, cc.dopts.copts.Dialer != nil)
-	channelz.Infof(logger, cc.channelzID, "parsed scheme: %q", cc.parsedTarget.Scheme)//打印日志，并添加链路追踪
-	resolverBuilder := cc.getResolver(cc.parsedTarget.Scheme)//可能返回在给定方案中注册的解析器。如果没有在该方案中注册，则将返回nil。
+	channelz.Infof(logger, cc.channelzID, "parsed scheme: %q", cc.parsedTarget.Scheme) //打印日志，并添加链路追踪
+	resolverBuilder := cc.getResolver(cc.parsedTarget.Scheme)                          //可能返回在给定方案中注册的解析器。如果没有在该方案中注册，则将返回nil。
 	if resolverBuilder == nil {
 		//如果解析程序生成器仍为nil，表明已解析目标的方案未注册。
 		//回退到默认解析器，并将 target 设置为 Endpoint。
-		channelz.Infof(logger, cc.channelzID, "scheme %q not registered, fallback to default scheme", cc.parsedTarget.Scheme)//打印日志，并添加链路追踪
+		channelz.Infof(logger, cc.channelzID, "scheme %q not registered, fallback to default scheme", cc.parsedTarget.Scheme) //打印日志，并添加链路追踪
 		cc.parsedTarget = resolver.Target{
 			Scheme:   resolver.GetDefaultScheme(),
 			Endpoint: target,
@@ -279,12 +281,14 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		}
 	}
 
-	creds := cc.dopts.copts.TransportCredentials
-	if creds != nil && creds.Info().ServerName != "" {
+	//设置 authority
+	//要么是用户指定的服务名，要么是自定义配置中的 authority，要么是解析后的 Endpoint
+	creds := cc.dopts.copts.TransportCredentials       //获取建立客户端连接所需要的身份验证
+	if creds != nil && creds.Info().ServerName != "" { //如果能获取到身份凭证，且服务名不为空
 		cc.authority = creds.Info().ServerName
-	} else if cc.dopts.insecure && cc.dopts.authority != "" {
+	} else if cc.dopts.insecure && cc.dopts.authority != "" { //如果自定义配置中设置了传输安全，且设置了 authority
 		cc.authority = cc.dopts.authority
-	} else if strings.HasPrefix(cc.target, "unix:") || strings.HasPrefix(cc.target, "unix-abstract:") {
+	} else if strings.HasPrefix(cc.target, "unix:") || strings.HasPrefix(cc.target, "unix-abstract:") { //判断是否是本地
 		cc.authority = "localhost"
 	} else if strings.HasPrefix(cc.parsedTarget.Endpoint, ":") {
 		cc.authority = "localhost" + cc.parsedTarget.Endpoint
@@ -293,7 +297,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		// authority for ClientConn.
 		cc.authority = cc.parsedTarget.Endpoint
 	}
-
+	//相比上面的逻辑，这里是阻塞的等待初始化服务配置
 	if cc.dopts.scChan != nil && !scSet {
 		// Blocking wait for the initial service config.
 		select {
@@ -307,7 +311,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		}
 	}
 	if cc.dopts.scChan != nil {
-		go cc.scWatcher()
+		go cc.scWatcher()//监控ServiceConfig的变化，这样可以在dial之后动态的修改client的访问服务的配置ServiceConfig
 	}
 
 	var credsClone credentials.TransportCredentials
@@ -323,11 +327,12 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		Target:           cc.parsedTarget,
 	}
 
-	// Build the resolver.
+	//开始构建解析器
 	rWrapper, err := newCCResolverWrapper(cc, resolverBuilder)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build resolver: %v", err)
 	}
+	//防止并发
 	cc.mu.Lock()
 	cc.resolverWrapper = rWrapper
 	cc.mu.Unlock()
@@ -509,10 +514,10 @@ type ClientConn struct {
 	target       string          //在没有负载均衡的情况下，是服务器的地址：ip+端口；在负载情况下，是etcd的key
 	parsedTarget resolver.Target //去解析 target 生成 parsedTarget
 	authority    string
-	dopts        dialOptions //建立连接的各种配置
+	dopts        dialOptions               //建立连接的各种配置
 	csMgr        *connectivityStateManager //每个连接的状态管理
 
-	balancerBuildOpts balancer.BuildOptions//与远程负载均衡服务器连接的凭证，若没有安全上的考虑，忽略该项
+	balancerBuildOpts balancer.BuildOptions //与远程负载均衡服务器连接的凭证，若没有安全上的考虑，忽略该项
 	blockingpicker    *pickerWrapper
 
 	safeConfigSelector iresolver.SafeConfigSelector
