@@ -52,9 +52,10 @@ import (
 )
 
 const (
-	// minimum time to give a connection to complete
+	// 一个连接完成的最短时间
 	minConnectTimeout = 20 * time.Second
 	// must match grpclbName in grpclb/grpclb.go
+	//负载均衡名称
 	grpclbName = "grpclb"
 )
 
@@ -64,38 +65,38 @@ var (
 	//
 	// Deprecated: this error should not be relied upon by users; use the status
 	// code of Canceled instead.
+	//被弃用，用code.Canceled代替
+	//客户端正在关闭错误
 	ErrClientConnClosing = status.Error(codes.Canceled, "grpc: the client connection is closing")
 	// errConnDrain indicates that the connection starts to be drained and does not accept any new RPCs.
+	//表示连接开始被耗尽并且不接受任何新的RPC
 	errConnDrain = errors.New("grpc: the connection is drained")
 	// errConnClosing indicates that the connection is closing.
+	//表示连接正在关闭。
 	errConnClosing = errors.New("grpc: the connection is closing")
 	// invalidDefaultServiceConfigErrPrefix is used to prefix the json parsing error for the default
 	// service config.
+	//表示提供的默认服务配置非法
 	invalidDefaultServiceConfigErrPrefix = "grpc: the provided default service config is invalid"
 )
 
-// The following errors are returned from Dial and DialContext
+//下面的错误来自Dial和DialContext
 var (
-	// errNoTransportSecurity indicates that there is no transport security
-	// being set for ClientConn. Users should either set one or explicitly
-	// call WithInsecure DialOption to disable security.
+	//表示没有为ClientConn设置任何传输安全性。用户应设置一个或显式调用WithInsecure DialOption以禁用安全性。
 	errNoTransportSecurity = errors.New("grpc: no transport security set (use grpc.WithInsecure() explicitly or set credentials)")
-	// errTransportCredsAndBundle indicates that creds bundle is used together
-	// with other individual Transport Credentials.
+	//凭证不得与单独的TransportCredentials一起使用
 	errTransportCredsAndBundle = errors.New("grpc: credentials.Bundle may not be used with individual TransportCredentials")
-	// errTransportCredentialsMissing indicates that users want to transmit security
-	// information (e.g., OAuth2 token) which requires secure connection on an insecure
-	// connection.
+	//表示用户要传输需要在不安全连接上进行安全连接的安全信息（例如OAuth2令牌）。
 	errTransportCredentialsMissing = errors.New("grpc: the credentials require transport level security (use grpc.WithTransportCredentials() to set)")
-	// errCredentialsConflict indicates that grpc.WithTransportCredentials()
-	// and grpc.WithInsecure() are both called for a connection.
+	//同时调用grpc.WithTransportCredentials（）和grpc.WithInsecure（）。
 	errCredentialsConflict = errors.New("grpc: transport credentials are set for an insecure connection (grpc.WithTransportCredentials() and grpc.WithInsecure() are both called)")
 )
 
 const (
-	defaultClientMaxReceiveMessageSize = 1024 * 1024 * 4
+	//默认的最大的发送和接收信息大小
+	defaultClientMaxReceiveMessageSize = 1024 * 1024 * 4//用MaxCallRecvMsgSize 可以改变
 	defaultClientMaxSendMessageSize    = math.MaxInt32
-	// http2IOBufSize specifies the buffer size for sending frames.
+	//用于指定 http2IOBufSize 用于发送/读取帧的缓冲区大小。
 	defaultWriteBufSize = 32 * 1024
 	defaultReadBufSize  = 32 * 1024
 )
@@ -116,23 +117,15 @@ func (dcs *defaultConfigSelector) SelectConfig(rpcInfo iresolver.RPCInfo) (*ires
 	}, nil
 }
 
-// DialContext creates a client connection to the given target. By default, it's
-// a non-blocking dial (the function won't wait for connections to be
-// established, and connecting happens in the background). To make it a blocking
-// dial, use WithBlock() dial option.
-//
-// In the non-blocking case, the ctx does not act against the connection. It
-// only controls the setup steps.
-//
-// In the blocking case, ctx can be used to cancel or expire the pending
-// connection. Once this function returns, the cancellation and expiration of
-// ctx will be noop. Users should call ClientConn.Close to terminate all the
-// pending operations after this function returns.
-//
-// The target name syntax is defined in
-// https://github.com/grpc/grpc/blob/master/doc/naming.md.
-// e.g. to use dns resolver, a "dns:///" prefix should be applied to the target.
+//创建到给定目标的客户端连接。
+//默认情况下，它是非阻塞的（该功能不会等待建立连接，并且连接发生在后台）。要使其成为阻塞的，请使用WithBlock（）。
+//在非阻塞情况下，ctx不会对连接起作用。它仅控制设置步骤。
+//在阻塞情况下，ctx可用于取消或终止挂起的连接。此函数返回后，ctx的取消和到期将不再起作用。用户应在此函数返回后调用ClientConn.Close终止所有挂起的操作。
+//target命名规范参考
+//https://github.com/grpc/grpc/blob/master/doc/naming.md.
 func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *ClientConn, err error) {
+	//ClientConn 对象是连接管理的入口，表示到服务端的一个逻辑的连接，会做名字解析、负载均衡、KeepAlive 等连接管理方面的操作，是个线程安全的对象。
+	//每个 ClientConn 对应有多个 SubConn，ClientConn 会基于名字发现（resolver）得到多个 SubConn，并面向多个 SubConn 之间实现负载均衡（balancer）。
 	cc := &ClientConn{
 		target:            target,
 		csMgr:             &connectivityStateManager{},
@@ -150,6 +143,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		opt.apply(&cc.dopts) //初始化所有参数
 	}
 
+	//这里处理一些埋点操作
 	chainUnaryClientInterceptors(cc)  //处理一元拦截器
 	chainStreamClientInterceptors(cc) //处理流客户端拦截器
 
@@ -159,7 +153,10 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		}
 	}()
 
-	//设置 channelz
+	//设置 channelz，作用是gRPC用来debug问题的一个高阶特性
+	//参考文档：
+	//https://grpc.io/blog/a-short-introduction-to-channelz/
+	//https://github.com/grpc/proposal/blob/master/A14-channelz.md
 	if channelz.IsOn() {
 		if cc.dopts.channelzParentID != 0 {
 			cc.channelzID = channelz.RegisterChannel(&channelzChannel{cc}, cc.dopts.channelzParentID, target)
@@ -180,8 +177,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 
 	//这里判断与配置ClientConn的传输安全性
 	if !cc.dopts.insecure { //通过 WithInsecure 配置
-		//表示禁用ClientConn的传输安全性时
-		//存储建立客户端连接所需的身份验证器  TransportCredentials和CredsBundle中必须有一个为 nil。
+		//表示启用ClientConn的传输安全性时
 		if cc.dopts.copts.TransportCredentials == nil && cc.dopts.copts.CredsBundle == nil {
 			return nil, errNoTransportSecurity
 		}
@@ -189,11 +185,11 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 			return nil, errTransportCredsAndBundle
 		}
 	} else {
-		//表示启用ClientConn的传输安全性时
-		//TransportCredentials和CredsBundle中必须都为 non-nil。
+		//表示禁用ClientConn的传输安全性时
 		if cc.dopts.copts.TransportCredentials != nil || cc.dopts.copts.CredsBundle != nil {
 			return nil, errCredentialsConflict
 		}
+		//单个RPC请求时，还是可以带入验证功能的，所以为了避免认证的问题，建议全部开启认证
 		for _, cd := range cc.dopts.copts.PerRPCCredentials {
 			if cd.RequireTransportSecurity() {
 				return nil, errTransportCredentialsMissing
@@ -239,6 +235,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		}
 	}()
 
+	//sc 指的是serviceconfig，已经被弃用
 	scSet := false              //是否读取到服务配置标记，true 表示成功获取到，因为 scChan 可以异步设置，因此会出现 scChan 不为 nil，但是 scSet = false的情况
 	if cc.dopts.scChan != nil { //通过 WithServiceConfig 设置，是一个具有读取服务配置的通道
 		// 尝试获取初始服务配置
@@ -281,7 +278,7 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		}
 	}
 
-	//设置 authority
+	//设置认证相关的参数
 	//要么是用户指定的服务名，要么是自定义配置中的 authority，要么是解析后的 Endpoint
 	creds := cc.dopts.copts.TransportCredentials       //获取建立客户端连接所需要的身份验证
 	if creds != nil && creds.Info().ServerName != "" { //如果能获取到身份凭证，且服务名不为空
@@ -314,10 +311,12 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		go cc.scWatcher()//监控ServiceConfig的变化，这样可以在dial之后动态的修改client的访问服务的配置ServiceConfig
 	}
 
+	//克隆一份creds
 	var credsClone credentials.TransportCredentials
 	if creds := cc.dopts.copts.TransportCredentials; creds != nil {
 		credsClone = creds.Clone()
 	}
+	//负载均衡相关参数
 	cc.balancerBuildOpts = balancer.BuildOptions{
 		DialCreds:        credsClone,
 		CredsBundle:      cc.dopts.copts.CredsBundle,
@@ -327,7 +326,8 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 		Target:           cc.parsedTarget,
 	}
 
-	//开始构建解析器
+	//cc：指的是客户端连接
+	//这里会对Resolver做了一层封装
 	rWrapper, err := newCCResolverWrapper(cc, resolverBuilder)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build resolver: %v", err)
@@ -337,8 +337,9 @@ func DialContext(ctx context.Context, target string, opts ...DialOption) (conn *
 	cc.resolverWrapper = rWrapper
 	cc.mu.Unlock()
 
-	// A blocking dial blocks until the clientConn is ready.
-	if cc.dopts.block {
+	//如果设置了 block，那就会在for循环里等待，直到完成连接
+	//如果没有设置，就会直接返回
+	if cc.dopts.block { //通过 WithBlock（） 设置
 		for {
 			s := cc.GetState()
 			if s == connectivity.Ready {

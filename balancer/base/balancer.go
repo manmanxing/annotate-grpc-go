@@ -63,6 +63,8 @@ type subConnInfo struct {
 	attrs   *attributes.Attributes
 }
 
+//在 balancer 创建之初的初始状态为 Idle，subConns 集合也为空。
+//balancer 并不直接对连接做探活，连接的存活性等信息也来自于接口外部的 ClientConn 对象
 type baseBalancer struct {
 	cc            balancer.ClientConn
 	pickerBuilder PickerBuilder
@@ -97,6 +99,7 @@ func (b *baseBalancer) ResolverError(err error) {
 	})
 }
 
+//更新客户端连接状态：处理名字解析得到的新地址、移除旧地址
 func (b *baseBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 	// TODO: handle s.ResolverState.ServiceConfig?
 	if logger.V(2) {
@@ -104,28 +107,17 @@ func (b *baseBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 	}
 	// Successful resolution; clear resolver error and ensure we return nil.
 	b.resolverErr = nil
-	// addrsSet is the set converted from addrs, it's used for quick lookup of an address.
+	//用于快速查找 Addresses
 	addrsSet := make(map[resolver.Address]struct{})
+	//循环 target 最新一组已解析地址
 	for _, a := range s.ResolverState.Addresses {
-		// Strip attributes from addresses before using them as map keys. So
-		// that when two addresses only differ in attributes pointers (but with
-		// the same attribute content), they are considered the same address.
-		//
-		// Note that this doesn't handle the case where the attribute content is
-		// different. So if users want to set different attributes to create
-		// duplicate connections to the same backend, it doesn't work. This is
-		// fine for now, because duplicate is done by setting Metadata today.
-		//
-		// TODO: read attributes to handle duplicate connections.
 		aNoAttrs := a
-		aNoAttrs.Attributes = nil
+		aNoAttrs.Attributes = nil//更新属性为 nil
 		addrsSet[aNoAttrs] = struct{}{}
 		if scInfo, ok := b.subConns[aNoAttrs]; !ok {
-			// a is a new address (not existing in b.subConns).
-			//
-			// When creating SubConn, the original address with attributes is
-			// passed through. So that connection configurations in attributes
-			// (like creds) will be used.
+			// a 是一个新的地址，不存在于 b.subConns 中
+			//为新发现的地址创建 SubConn，加入到 subConn 列表
+			//标记 scState 状态为 Idle 并尝试建立连接，这里需要注意，Connect() 并非意味着连接的成功建立，而是一项异步操作。
 			sc, err := b.cc.NewSubConn([]resolver.Address{a}, balancer.NewSubConnOptions{HealthCheckEnabled: b.config.HealthCheck})
 			if err != nil {
 				logger.Warningf("base.baseBalancer: failed to create new SubConn: %v", err)
@@ -135,20 +127,18 @@ func (b *baseBalancer) UpdateClientConnState(s balancer.ClientConnState) error {
 			b.scStates[sc] = connectivity.Idle
 			sc.Connect()
 		} else {
-			// Always update the subconn's address in case the attributes
-			// changed.
-			//
-			// The SubConn does a reflect.DeepEqual of the new and old
-			// addresses. So this is a noop if the current address is the same
-			// as the old one (including attributes).
+			// a 不是一个新地址，更新 subConn 的地址信息
 			scInfo.attrs = a.Attributes
 			b.subConns[aNoAttrs] = scInfo
 			b.cc.UpdateAddresses(scInfo.subConn, []resolver.Address{a})
 		}
 	}
+	//调用 ClientConn 的 RemoveSubConn，从自身的 subConns 集合中移除该 subConn，注意这里并没有移除 scState 的记录
 	for a, scInfo := range b.subConns {
 		// a was removed by resolver.
 		if _, ok := addrsSet[a]; !ok {
+			//RemoveSubConn 不意味着连接立即就关闭了
+			//当后端实例被注销时，客户端可能仍有活跃请求存在，应当在活跃请求完成之后，再使连接进入 Shutdown 状态。
 			b.cc.RemoveSubConn(scInfo.subConn)
 			delete(b.subConns, a)
 			// Keep the state of this sc in b.scStates until sc's state becomes Shutdown.
@@ -201,6 +191,8 @@ func (b *baseBalancer) regeneratePicker() {
 	b.picker = b.pickerBuilder.Build(PickerBuildInfo{ReadySCs: readySCs})
 }
 
+//侦听 SubConn 连接状态变化
+//sc：子连接  state：当前子连接状态
 func (b *baseBalancer) UpdateSubConnState(sc balancer.SubConn, state balancer.SubConnState) {
 	s := state.ConnectivityState
 	if logger.V(2) {
@@ -234,15 +226,14 @@ func (b *baseBalancer) UpdateSubConnState(sc balancer.SubConn, state balancer.Su
 
 	b.state = b.csEvltr.RecordTransition(oldS, s)
 
-	// Regenerate picker when one of the following happens:
-	//  - this sc entered or left ready
-	//  - the aggregated state of balancer is TransientFailure
-	//    (may need to update error message)
+	//重新生成选择器判断逻辑：
+	//-此sc已进入或准备就绪
+	//-平衡器的聚合状态为TransientFailure（可能需要更新错误消息）
 	if (s == connectivity.Ready) != (oldS == connectivity.Ready) ||
 		b.state == connectivity.TransientFailure {
 		b.regeneratePicker()
 	}
-
+    //最后通过 UpdateState 方法将 Picker 返回给 ClientConn 对象。
 	b.cc.UpdateState(balancer.State{ConnectivityState: b.state, Picker: b.picker})
 }
 

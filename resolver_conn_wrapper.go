@@ -32,8 +32,7 @@ import (
 	"google.golang.org/grpc/serviceconfig"
 )
 
-// ccResolverWrapper is a wrapper on top of cc for resolvers.
-// It implements resolver.ClientConn interface.
+// ccResolverWrapper 是cc解析器顶部的包装器。它实现了resolver.ClientConn接口。
 type ccResolverWrapper struct {
 	cc         *ClientConn
 	resolverMu sync.Mutex

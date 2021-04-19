@@ -37,19 +37,24 @@ type scStateUpdate struct {
 	err   error
 }
 
-// ccBalancerWrapper is a wrapper on top of cc for balancers.
-// It implements balancer.ClientConn interface.
+// ccBalancerWrapper cc顶部的包装器，用于平衡器。它实现了 balancer.ClientConn 接口。
+// balancer 对象是线程不安全的，然而日常的负载均衡信息同步是需要协调并发的，这部分并发协调的逻辑便位于 ccBalancerWrapper 对象之中
 type ccBalancerWrapper struct {
-	cc         *ClientConn
-	balancerMu sync.Mutex // synchronizes calls to the balancer
+	cc *ClientConn
+	//balancerMu 在每次调用 balancer 时上锁保护
+	balancerMu sync.Mutex
 	balancer   balancer.Balancer
-	scBuffer   *buffer.Unbounded
-	done       *grpcsync.Event
-
+	//scBuffer 是接收 scStateUpdate 事件的入口，buffer.Unbounded 可以看做是一个不会阻塞的 chan，
+	//scBuffer 的输入又是来自 ccBalancerWrapper 的回调函数 handleSubConnStateChange
+	scBuffer *buffer.Unbounded
+	//可以看做是关闭的标记位
+	done *grpcsync.Event
+	//mu 在每次访问 subConns 这个 ccBalancerWrapper 的内部状态时上锁保护
 	mu       sync.Mutex
 	subConns map[*acBalancerWrapper]struct{}
 }
 
+//在创建 ccBalancerWrapper 对象时，会跑一个新的 go ccb.watcher() 的 goroutine 用于实时监听 SubConnStateChange
 func newCCBalancerWrapper(cc *ClientConn, b balancer.Builder, bopts balancer.BuildOptions) *ccBalancerWrapper {
 	ccb := &ccBalancerWrapper{
 		cc:       cc,
@@ -62,8 +67,11 @@ func newCCBalancerWrapper(cc *ClientConn, b balancer.Builder, bopts balancer.Bui
 	return ccb
 }
 
-// watcher balancer functions sequentially, so the balancer can be implemented
-// lock-free.
+
+//每当 ClientConn 调用 handleSubConnStateChange 时，它将这个事件传递给 scBuffer，
+//再在 go ccb.watcher() 里面调用 balancer 的 UpdateSubConnState 方法。
+//为什么安排一个 scBuffer 而不是直接调用回调 UpdateSubConnState 呢？
+//猜 handleSubConnStateChange 这个操作函数可能在个关键路径上，将操作异步化，不需要争用 balanceMu 这把锁。
 func (ccb *ccBalancerWrapper) watcher() {
 	for {
 		select {

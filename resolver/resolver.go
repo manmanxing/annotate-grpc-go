@@ -16,8 +16,8 @@
  *
  */
 
-// Package resolver defines APIs for name resolution in gRPC.
-// All APIs in this package are experimental.
+
+//该包是专门用作 grpc名词解析使用
 package resolver
 
 import (
@@ -30,27 +30,22 @@ import (
 )
 
 var (
-	// m is a map from scheme to resolver builder.
+	//k:scheme v:对应的解析器生成器
 	m = make(map[string]Builder)
-	// defaultScheme is the default scheme to use.
+	//默认的 scheme
 	defaultScheme = "passthrough"
 )
 
 // TODO(bar) install dns resolver in init(){}.
 
-// Register registers the resolver builder to the resolver map. b.Scheme will be
-// used as the scheme registered with this builder.
-//
-// NOTE: this function must only be called during initialization time (i.e. in
-// an init() function), and is not thread-safe. If multiple Resolvers are
-// registered with the same name, the one registered last will take effect.
+//注册 scheme 和对应的解析器生成器到 map中
+//注意：此函数只能在初始化期间调用（即在init（）函数中），并且不是线程安全的。如果使用相同的名称注册了多个解析器，则最后一个注册的解析器将生效。
 func Register(b Builder) {
 	m[b.Scheme()] = b
 }
 
-// Get returns the resolver builder registered with the given scheme.
-//
-// If no builder is register with the scheme, nil will be returned.
+//通过一个 scheme 获取一个解析器生成器
+//如果获取不到，就返回为 nil
 func Get(scheme string) Builder {
 	if b, ok := m[scheme]; ok {
 		return b
@@ -58,12 +53,7 @@ func Get(scheme string) Builder {
 	return nil
 }
 
-// SetDefaultScheme sets the default scheme that will be used. The default
-// default scheme is "passthrough".
-//
-// NOTE: this function must only be called during initialization time (i.e. in
-// an init() function), and is not thread-safe. The scheme set last overrides
-// previously set values.
+//注意：此函数只能在初始化期间调用（即在init（）函数中），并且不是线程安全的。最后设置的方案将覆盖先前设置的值。
 func SetDefaultScheme(scheme string) {
 	defaultScheme = scheme
 }
@@ -73,7 +63,7 @@ func GetDefaultScheme() string {
 	return defaultScheme
 }
 
-// AddressType indicates the address type returned by name resolution.
+// AddressType 表示通过名称解析返回的地址类型。
 //
 // Deprecated: use Attributes in Address instead.
 type AddressType uint8
@@ -92,7 +82,7 @@ const (
 	GRPCLB
 )
 
-// Address represents a server the client connects to.
+// Address 代表客户端连接到的服务器
 //
 // Experimental
 //
@@ -131,8 +121,7 @@ type Address struct {
 	Metadata interface{}
 }
 
-// BuildOptions includes additional information for the builder to create
-// the resolver.
+// BuildOptions 包括供构建器创建解析器的其他信息。
 type BuildOptions struct {
 	// DisableServiceConfig indicates whether a resolver implementation should
 	// fetch service config data.
@@ -157,9 +146,11 @@ type BuildOptions struct {
 	Dialer func(context.Context, string) (net.Conn, error)
 }
 
-// State contains the current Resolver state relevant to the ClientConn.
+// State 包含与ClientConn相关的当前解析器状态。
+// 将返回值包装在 State 对象中，再通过回调如 UpdateState 方法进行返回
+// 如 resolver 中名字解析发生变化时，通过 UpdateState(State) 函数的回调告知 ClientConn 对象。
 type State struct {
-	// Addresses is the latest set of resolved addresses for the target.
+	// Addresses 是 target 最新一组已解析地址。
 	Addresses []Address
 
 	// ServiceConfig contains the result from parsing the latest service
@@ -172,33 +163,25 @@ type State struct {
 	Attributes *attributes.Attributes
 }
 
-// ClientConn contains the callbacks for resolver to notify any updates
-// to the gRPC ClientConn.
-//
-// This interface is to be implemented by gRPC. Users should not need a
-// brand new implementation of this interface. For the situations like
-// testing, the new implementation should embed this interface. This allows
-// gRPC to add new methods to this interface.
+
+//定义了自己的 ClientConn 接口
+//包含解析程序的回调，以通知对gRPC ClientConn的任何更新，grpc内部使用的接口
+//调用侧的 ClientConn 并非真正的 clientConn 对象，包装类 ccResolverWrapper，对 resolver UpdateState() 做胶水转换，再去调用 clientConn 对象的私有方法。
+//相同的操作在 balancer 上也有体现。
 type ClientConn interface {
-	// UpdateState updates the state of the ClientConn appropriately.
+	// 适当地更新ClientConn的状态。
 	UpdateState(State)
-	// ReportError notifies the ClientConn that the Resolver encountered an
-	// error.  The ClientConn will notify the load balancer and begin calling
-	// ResolveNow on the Resolver with exponential backoff.
+
+	//ReportError通知ClientConn解析程序遇到了错误。
+	//ClientConn将通知负载平衡器，并开始以指数退避的方式在Resolver上调用ResolveNow（触发名词解析）。
 	ReportError(error)
-	// NewAddress is called by resolver to notify ClientConn a new list
-	// of resolved addresses.
-	// The address list should be the complete list of resolved addresses.
-	//
-	// Deprecated: Use UpdateState instead.
+
+	//解析程序调用NewAddress来通知ClientConn解析地址的新列表。地址列表应该是已解析地址的完整列表。
 	NewAddress(addresses []Address)
-	// NewServiceConfig is called by resolver to notify ClientConn a new
-	// service config. The service config should be provided as a json string.
-	//
-	// Deprecated: Use UpdateState instead.
+
+	//由解析程序调用，以通知ClientConn新的服务配置。服务配置应作为json字符串提供
 	NewServiceConfig(serviceConfig string)
-	// ParseServiceConfig parses the provided service config and returns an
-	// object that provides the parsed config.
+	//ParseServiceConfig解析提供的服务配置，并返回提供解析后的配置的对象。
 	ParseServiceConfig(serviceConfigJSON string) *serviceconfig.ParseResult
 }
 
@@ -225,7 +208,8 @@ type Target struct {
 	Endpoint  string
 }
 
-// Builder creates a resolver that will be used to watch name resolution updates.
+// Builder 创建一个解析器，该解析器将用于监视名称解析更新。
+//像个 Factory 类，用于创建具体的 Resolver 对象
 type Builder interface {
 	// Build creates a new resolver for the given target.
 	//
@@ -240,13 +224,10 @@ type Builder interface {
 // ResolveNowOptions includes additional information for ResolveNow.
 type ResolveNowOptions struct{}
 
-// Resolver watches for the updates on the specified target.
-// Updates include address updates and service config updates.
+// Resolver 监视指定目标上的更新。更新包括地址更新和服务配置更新。
 type Resolver interface {
-	// ResolveNow will be called by gRPC to try to resolve the target name
-	// again. It's just a hint, resolver can ignore this if it's not necessary.
-	//
-	// It could be called multiple times concurrently.
+	//ClientConn 对象会通过 Resolver 接口的 ResolveNow 方法来触发名字解析
+	//支持并发调用
 	ResolveNow(ResolveNowOptions)
 	// Close closes the resolver.
 	Close()

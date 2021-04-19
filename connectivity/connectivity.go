@@ -16,9 +16,9 @@
  *
  */
 
-// Package connectivity defines connectivity semantics.
+// Package connectivity 定义连接语义.
 // For details, see https://github.com/grpc/grpc/blob/master/doc/connectivity-semantics-and-api.md.
-// All APIs in this package are experimental.
+
 package connectivity
 
 import (
@@ -27,8 +27,7 @@ import (
 
 var logger = grpclog.Component("core")
 
-// State indicates the state of connectivity.
-// It can be the state of a ClientConn or SubConn.
+//指示连接状态。它可以是ClientConn或SubConn的状态
 type State int
 
 func (s State) String() string {
@@ -50,14 +49,14 @@ func (s State) String() string {
 }
 
 const (
-	// Idle indicates the ClientConn is idle.
+	//表示ClientConn处于空闲状态
 	Idle State = iota
-	// Connecting indicates the ClientConn is connecting.
+	//表示ClientConn正在连接。
 	Connecting
-	// Ready indicates the ClientConn is ready for work.
+	//表示ClientConn已准备就绪
 	Ready
-	// TransientFailure indicates the ClientConn has seen a failure but expects to recover.
+	//表示ClientConn发生故障，但希望恢复
 	TransientFailure
-	// Shutdown indicates the ClientConn has started shutting down.
+	//表示ClientConn已开始关闭。
 	Shutdown
 )

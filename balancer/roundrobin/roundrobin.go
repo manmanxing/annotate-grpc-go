@@ -30,16 +30,16 @@ import (
 	"google.golang.org/grpc/internal/grpcrand"
 )
 
-// Name is the name of round_robin balancer.
+//round_robin平衡器的名称
 const Name = "round_robin"
 
 var logger = grpclog.Component("roundrobin")
 
-// newBuilder creates a new roundrobin balancer builder.
+//创建一个新的轮询平衡器生成器。
 func newBuilder() balancer.Builder {
 	return base.NewBalancerBuilder(Name, &rrPickerBuilder{}, base.Config{HealthCheck: true})
 }
-
+//初始化就会注册一个轮询平衡器
 func init() {
 	balancer.Register(newBuilder())
 }
@@ -48,18 +48,18 @@ type rrPickerBuilder struct{}
 
 func (*rrPickerBuilder) Build(info base.PickerBuildInfo) balancer.Picker {
 	logger.Infof("roundrobinPicker: newPicker called with info: %v", info)
+	//所有准备就绪的子连接为空就报错
 	if len(info.ReadySCs) == 0 {
 		return base.NewErrPicker(balancer.ErrNoSubConnAvailable)
 	}
+	//装载所有的准备就绪的子连接
 	var scs []balancer.SubConn
 	for sc := range info.ReadySCs {
 		scs = append(scs, sc)
 	}
 	return &rrPicker{
 		subConns: scs,
-		// Start at a random index, as the same RR balancer rebuilds a new
-		// picker when SubConn states change, and we don't want to apply excess
-		// load to the first server in the list.
+		//从随机索引开始，因为当SubConn状态更改时，相同的RR平衡器会重新构建新的选择器，并且我们不想对列表中的第一台服务器施加过多的负载。
 		next: grpcrand.Intn(len(scs)),
 	}
 }
@@ -74,6 +74,8 @@ type rrPicker struct {
 	next int
 }
 
+//轮转返回一个可用连接
+//下一次可用连接的index = （这次index+1）% len(子连接)
 func (p *rrPicker) Pick(balancer.PickInfo) (balancer.PickResult, error) {
 	p.mu.Lock()
 	sc := p.subConns[p.next]
